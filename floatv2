@@ -127,43 +127,25 @@ local function stopFloat()
     end)
 end
 -- =============================================
-    spinAngle = 0
+-- NO ANIM
+-- =============================================
+local noAnimEnabled = savedCfg.noAnimEnabled == true
+local noAnimConn    = nil
+
+local function applyNoAnim()
     pcall(function()
         local c = Player.Character
         if not c then return end
         local hum = c:FindFirstChildOfClass("Humanoid")
-        if hum then hum.AutoRotate = true end
-    end)
-end
-
--- =============================================
--- NO ANIM (removes walking/idle animations)
--- =============================================
-local noAnimEnabled  = savedCfg.noAnimEnabled == true
-local noAnimConn     = nil
-local removedAnims   = {}
-
-local function applyNoAnim()
-    pcall(function()
-        local c   = Player.Character
-        if not c then return end
-        local hum = c:FindFirstChildOfClass("Humanoid")
         if not hum then return end
-        local animCtrl = hum:FindFirstChildOfClass("Animator") or hum:FindFirstChildOfClass("AnimationController")
-        -- Stop all playing tracks
-        if animCtrl then
-            for _, track in ipairs(hum:GetPlayingAnimationTracks()) do
-                track:Stop(0)
-            end
+        for _, track in ipairs(hum:GetPlayingAnimationTracks()) do
+            track:Stop(0)
         end
-        -- Remove AnimationScript that re-triggers them
         for _, obj in ipairs(c:GetDescendants()) do
             if obj:IsA("LocalScript") and (obj.Name == "Animate" or obj.Name == "animate") then
                 obj.Disabled = true
             end
         end
-        -- Zero out walk speed visually (doesn't affect movement)
-        hum.WalkSpeed = hum.WalkSpeed  -- no-op; anims just won't play
     end)
 end
 
@@ -171,7 +153,6 @@ local function removeNoAnim()
     pcall(function()
         local c = Player.Character
         if not c then return end
-        local hum = c:FindFirstChildOfClass("Humanoid")
         for _, obj in ipairs(c:GetDescendants()) do
             if obj:IsA("LocalScript") and (obj.Name == "Animate" or obj.Name == "animate") then
                 obj.Disabled = false
@@ -182,7 +163,6 @@ end
 
 local function enableNoAnim()
     applyNoAnim()
-    -- Re-apply on respawn / character swap
     if noAnimConn then noAnimConn:Disconnect() end
     noAnimConn = Player.CharacterAdded:Connect(function()
         task.wait(0.5)
@@ -217,27 +197,22 @@ espSg.IgnoreGuiInset = true
 espSg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 espSg.Parent        = Player.PlayerGui
 
-local ESP_COLOR     = Color3.fromRGB(0, 140, 255)   -- base blue
-local ESP_COL_WHITE = Color3.fromRGB(255, 255, 255) -- chaser highlight
-local BOX_THICKNESS = 2   -- px
-local CHASE_SPEED   = 1.2 -- full loop per second
+local ESP_COLOR     = Color3.fromRGB(0, 140, 255)
+local ESP_COL_WHITE = Color3.fromRGB(255, 255, 255)
+local BOX_THICKNESS = 2
+local CHASE_SPEED   = 1.2
 
--- Fixed-size world-space box around the player's actual standing position (feet to head).
--- Uses HumanoidRootPart + humanoid height so the box stays a constant size regardless
--- of animation, accessories, or tool positions.
-local ESP_BOX_HALF_W = 1.5   -- half-width in studs
-local ESP_BOX_FOOT_OFF = -3.2 -- offset below HRP to feet
-local ESP_BOX_HEAD_OFF =  3.2 -- offset above HRP to head
+-- Fixed world-space box around HRP, constant size regardless of animations
+local ESP_BOX_HALF_W  =  1.5
+local ESP_BOX_FOOT_OFF = -3.2
+local ESP_BOX_HEAD_OFF =  3.2
 
 local function getScreenBounds(char)
     local cam = workspace.CurrentCamera
     if not cam then return nil end
-
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hrp then return nil end
-
     local base = hrp.Position
-    -- 4 bottom corners + 4 top corners of a fixed world-space box
     local corners = {
         base + Vector3.new(-ESP_BOX_HALF_W, ESP_BOX_FOOT_OFF, -ESP_BOX_HALF_W),
         base + Vector3.new( ESP_BOX_HALF_W, ESP_BOX_FOOT_OFF, -ESP_BOX_HALF_W),
@@ -248,11 +223,9 @@ local function getScreenBounds(char)
         base + Vector3.new(-ESP_BOX_HALF_W, ESP_BOX_HEAD_OFF,  ESP_BOX_HALF_W),
         base + Vector3.new( ESP_BOX_HALF_W, ESP_BOX_HEAD_OFF,  ESP_BOX_HALF_W),
     }
-
     local minX, minY = math.huge, math.huge
     local maxX, maxY = -math.huge, -math.huge
-    local allBehind  = true
-
+    local allBehind = true
     for _, worldPos in ipairs(corners) do
         local screenPos, inView = cam:WorldToViewportPoint(worldPos)
         if inView then
@@ -263,7 +236,6 @@ local function getScreenBounds(char)
             maxY = math.max(maxY, screenPos.Y)
         end
     end
-
     if allBehind or minX == math.huge then return nil end
     return minX, minY, maxX, maxY
 end
@@ -281,49 +253,40 @@ local function getEspTarget(plr)
     return nil
 end
 
--- Number of segments per side for the chaser effect
 local SEG_COUNT = 12
 
 local function createBoxFor(plr)
     if plr == Player then return end
     if espBoxes[plr] then return end
-
-    -- Container frame (transparent, full screen, pixel-positioned each frame)
     local holder = Instance.new("Frame", espSg)
-    holder.Name              = "ESP_" .. plr.Name
+    holder.Name = "ESP_" .. plr.Name
     holder.BackgroundTransparency = 1
-    holder.Size              = UDim2.new(0, 100, 0, 100)
-    holder.Position          = UDim2.new(0, 0, 0, 0)
-    holder.BorderSizePixel   = 0
-    holder.ZIndex            = 10
-
-    -- 4 sides x SEG_COUNT segments each
-    -- sides: 1=Top, 2=Right, 3=Bottom, 4=Left  (clockwise)
-    local segs = {}  -- segs[side][seg] = Frame
+    holder.Size = UDim2.new(0, 100, 0, 100)
+    holder.Position = UDim2.new(0, 0, 0, 0)
+    holder.BorderSizePixel = 0
+    holder.ZIndex = 10
+    local segs = {}
     for side = 1, 4 do
         segs[side] = {}
         for s = 1, SEG_COUNT do
             local f = Instance.new("Frame", holder)
             f.BackgroundColor3 = ESP_COLOR
-            f.BorderSizePixel  = 0
-            f.ZIndex           = 11
+            f.BorderSizePixel = 0
+            f.ZIndex = 11
             segs[side][s] = f
         end
     end
-
-    -- Name label above the box
     local nameLbl = Instance.new("TextLabel", holder)
     nameLbl.BackgroundTransparency = 1
-    nameLbl.Text       = plr.Name
+    nameLbl.Text = plr.Name
     nameLbl.TextColor3 = ESP_COLOR
-    nameLbl.Font       = Enum.Font.GothamBold
-    nameLbl.TextSize   = 12
+    nameLbl.Font = Enum.Font.GothamBold
+    nameLbl.TextSize = 12
     nameLbl.TextStrokeTransparency = 0.4
     nameLbl.TextStrokeColor3 = Color3.new(0,0,0)
-    nameLbl.ZIndex     = 12
-    nameLbl.Size       = UDim2.new(0, 120, 0, 16)
+    nameLbl.ZIndex = 12
+    nameLbl.Size = UDim2.new(0, 120, 0, 16)
     nameLbl.TextXAlignment = Enum.TextXAlignment.Center
-
     espBoxes[plr] = { holder = holder, segs = segs, nameLabel = nameLbl, timeOffset = math.random() }
 end
 
@@ -335,11 +298,9 @@ local function removeBoxFor(plr)
 end
 
 local function enableEsp()
-    -- Create boxes for all current players
     for _, plr in ipairs(Players:GetPlayers()) do
         createBoxFor(plr)
     end
-    -- Update loop: runs every frame to reposition boxes + animate chaser
     if espConn then espConn:Disconnect() espConn = nil end
     espConn = RunService.RenderStepped:Connect(function()
         if not espEnabled then return end
@@ -347,84 +308,53 @@ local function enableEsp()
         for plr, data in pairs(espBoxes) do
             pcall(function()
                 local char = getEspTarget(plr)
-                if not char then
-                    data.holder.Visible = false
-                    return
-                end
-
+                if not char then data.holder.Visible = false return end
                 local minX, minY, maxX, maxY = getScreenBounds(char)
-                if not minX then
-                    data.holder.Visible = false
-                    return
-                end
-
+                if not minX then data.holder.Visible = false return end
                 local w = maxX - minX
                 local h = maxY - minY
-                if w < 2 or h < 2 then
-                    data.holder.Visible = false
-                    return
-                end
-
-                data.holder.Visible  = true
+                if w < 2 or h < 2 then data.holder.Visible = false return end
+                data.holder.Visible = true
                 data.holder.Position = UDim2.new(0, minX, 0, minY)
-                data.holder.Size     = UDim2.new(0, w, 0, h)
-
-                local tk  = BOX_THICKNESS
-                local n   = SEG_COUNT
+                data.holder.Size = UDim2.new(0, w, 0, h)
+                local tk = BOX_THICKNESS
+                local n = SEG_COUNT
                 local segs = data.segs
-
-                -- Layout segments for each side (clockwise: Top, Right, Bottom, Left)
                 -- Top: left→right
                 for s = 1, n do
-                    local f = segs[1][s]
-                    f.Position = UDim2.new((s-1)/n, 0,       0, 0)
-                    f.Size     = UDim2.new(1/n,     0,       0, tk)
+                    segs[1][s].Position = UDim2.new((s-1)/n, 0, 0, 0)
+                    segs[1][s].Size = UDim2.new(1/n, 0, 0, tk)
                 end
                 -- Right: top→bottom
                 for s = 1, n do
-                    local f = segs[2][s]
-                    f.Position = UDim2.new(1, -tk,   (s-1)/n, 0)
-                    f.Size     = UDim2.new(0,  tk,   1/n,     0)
+                    segs[2][s].Position = UDim2.new(1, -tk, (s-1)/n, 0)
+                    segs[2][s].Size = UDim2.new(0, tk, 1/n, 0)
                 end
                 -- Bottom: right→left
                 for s = 1, n do
-                    local f = segs[3][s]
-                    f.Position = UDim2.new(1 - s/n,  0,  1, -tk)
-                    f.Size     = UDim2.new(1/n,      0,  0,  tk)
+                    segs[3][s].Position = UDim2.new(1 - s/n, 0, 1, -tk)
+                    segs[3][s].Size = UDim2.new(1/n, 0, 0, tk)
                 end
                 -- Left: bottom→top
                 for s = 1, n do
-                    local f = segs[4][s]
-                    f.Position = UDim2.new(0, 0,  1 - s/n,  0)
-                    f.Size     = UDim2.new(0, tk, 1/n,      0)
+                    segs[4][s].Position = UDim2.new(0, 0, 1 - s/n, 0)
+                    segs[4][s].Size = UDim2.new(0, tk, 1/n, 0)
                 end
-
-                -- Chaser: white spot travels clockwise through all 4*n segments
-                -- Total segments around the perimeter = 4*n
+                -- Chaser: white spot travels clockwise
                 local totalSegs = 4 * n
-                -- chaser head position in [0, totalSegs), advancing with time
                 local headPos = (now * CHASE_SPEED * totalSegs + data.timeOffset * totalSegs) % totalSegs
-
-                -- Pulse half-width in segments
-                local pulseWidth = totalSegs * 0.12  -- ~12% of perimeter
-
+                local pulseWidth = totalSegs * 0.12
                 for side = 1, 4 do
                     for s = 1, n do
-                        -- Global segment index (0-based)
                         local gi = (side - 1) * n + (s - 1)
-                        -- Distance from chaser head (wrapping)
-                        local d  = math.abs(gi - headPos)
+                        local d = math.abs(gi - headPos)
                         d = math.min(d, totalSegs - d)
                         local alpha = math.max(0, 1 - (d / pulseWidth)) ^ 2
                         segs[side][s].BackgroundColor3 = ESP_COLOR:Lerp(ESP_COL_WHITE, alpha)
                     end
                 end
-
-                -- Name label pulses white when chaser is near segment 0 (top-left corner)
-                local d0 = math.min(headPos, totalSegs - headPos)
-                local lblAlpha = math.max(0, 1 - (d0 / pulseWidth)) ^ 2
-                data.nameLabel.TextColor3 = ESP_COLOR:Lerp(ESP_COL_WHITE, lblAlpha)
-                data.nameLabel.Position   = UDim2.new(0.5, -60, 0, -18)
+                data.nameLabel.TextColor3 = ESP_COLOR
+                data.nameLabel.Position = UDim2.new(0.5, -60, 0, -18)
             end)
         end
     end)
@@ -690,8 +620,8 @@ local Y = {
     dropRow     = 152,
     espRow      = 200,
     noanimRow   = 252,
-    saveBtn     = 306,
-    savedLbl    = 348,
+    saveBtn     = 304,
+    savedLbl    = 346,
 }
 
 -- =============================================
@@ -853,7 +783,6 @@ espUI.clickBtn.MouseButton1Click:Connect(function()
     playSound("rbxassetid://6895079813",0.4,1)
 end)
 
-
 -- =============================================
 -- NO ANIM TOGGLE
 -- =============================================
@@ -926,17 +855,16 @@ UserInputService.InputBegan:Connect(function(input, gpe)
         DROP_KEYBIND=input.KeyCode dropKeyBtn.Text=input.KeyCode.Name
         dropKeyBtn.TextColor3=Color3.fromRGB(240,180,255) waitingForDropKey=false return
     end
+
     if waitingForNoanimKey then
         NOANIM_KEYBIND=input.KeyCode noanimUI.keyBtn.Text=input.KeyCode.Name
         noanimUI.keyBtn.TextColor3=Color3.fromRGB(200,160,255) waitingForNoanimKey=false return
     end
-
     if input.KeyCode==FLOAT_KEYBIND then
         local ns=not floatIsOn floatEnabled=ns floatUI.setVisual(ns) floatIsOn=ns
         if ns then startFloat() else stopFloat() end
     end
     if input.KeyCode==DROP_KEYBIND then fireDrop() end
-    end
     if input.KeyCode==NOANIM_KEYBIND then
         local ns=not noanimIsOn noAnimEnabled=ns noanimUI.setVisual(ns) noanimIsOn=ns
         if ns then enableNoAnim() else disableNoAnim() end
